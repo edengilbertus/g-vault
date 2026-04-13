@@ -4,7 +4,7 @@
 	import { fetchDashboardSummary, fetchMyLoanAccounts, type TransactionApi } from '$lib/api/client';
 	import { getStoredToken, getStoredUser } from '$lib/auth/session';
 	import MemberNav from '$lib/components/MemberNav.svelte';
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 
 	let showDepositModal = $state(false);
 	let isLoading = $state(true);
@@ -19,6 +19,10 @@
 	let loanProgressPercent = $state(0);
 	let loanPaidAmount = $state(0);
 	let loanRemainingAmount = $state(0);
+	let loanCardNote = $state('No active loan');
+	let loanProgressMeta = $state('No active loan to track');
+	let pendingDepositCount = $state(0);
+	let pendingDepositAmount = $state(0);
 
 	type DashboardTransaction = {
 		id: string;
@@ -31,6 +35,14 @@
 	};
 
 	let transactions = $state<DashboardTransaction[]>([]);
+	let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function clearRefreshTimer() {
+		if (refreshTimer) {
+			clearTimeout(refreshTimer);
+			refreshTimer = null;
+		}
+	}
 
 	function formatAmount(n: number): string {
 		const abs = Math.round(Math.abs(n)).toLocaleString('en-UG');
@@ -59,6 +71,14 @@
 		};
 	}
 
+	function transactionBadgeClass(tx: DashboardTransaction): string {
+		if (tx.status === 'failed') return 'badge-error';
+		if (tx.status === 'pending') return 'badge-pending';
+		if (tx.type === 'credit') return 'badge-success';
+		if (tx.type === 'debit') return 'badge-pending';
+		return '';
+	}
+
 	async function loadDashboard() {
 		const token = getStoredToken();
 		if (!token) {
@@ -66,6 +86,7 @@
 			return;
 		}
 
+		clearRefreshTimer();
 		isLoading = true;
 		loadError = '';
 		try {
@@ -75,6 +96,8 @@
 			]);
 
 			savingsBalance = Number(summary.savings_balance);
+			pendingDepositCount = Number(summary.pending_deposit_count ?? 0);
+			pendingDepositAmount = Number(summary.pending_deposit_amount ?? 0);
 			transactions = summary.recent_transactions.map(toTransactionView);
 			hasNextRepayment = Boolean(summary.next_repayment_date);
 			nextRepaymentDateLabel = summary.next_repayment_date
@@ -85,12 +108,13 @@
 					})
 				: 'No repayment due';
 
-			const parsedLoans = Array.isArray(loanAccounts) ? loanAccounts : (loanAccounts as any).results || [];
-			const activeLoan = parsedLoans.find((loan: any) => loan.status === 'active');
+			const activeLoan = loanAccounts.find((loan) => loan.status === 'active');
 			if (activeLoan) {
 				loanBalance = Number(activeLoan.outstanding_balance);
 				estimatedMonthlyRepayment = Math.round(loanBalance / activeLoan.term_months);
 				loanRemainingAmount = loanBalance;
+				loanCardNote = `${Number(activeLoan.interest_rate).toFixed(2)}% APR · ${activeLoan.term_months} months`;
+				loanProgressMeta = `Disbursed ${new Date(activeLoan.created_at).toLocaleDateString('en-UG', { month: 'short', year: 'numeric' })} · ${activeLoan.term_months}-month term`;
 
 				const totalLoanCost = Number(activeLoan.principal) * 1.18;
 				loanPaidAmount = Math.max(totalLoanCost - loanBalance, 0);
@@ -101,11 +125,18 @@
 				loanProgressPercent = 0;
 				loanPaidAmount = 0;
 				loanRemainingAmount = 0;
+				loanCardNote = 'No active loan';
+				loanProgressMeta = 'No active loan to track';
 			}
 		} catch (error) {
 			loadError = error instanceof Error ? error.message : 'Unable to load dashboard data.';
 		} finally {
 			isLoading = false;
+			if (transactions.some((tx) => tx.status === 'pending')) {
+				refreshTimer = setTimeout(() => {
+					void loadDashboard();
+				}, 15000);
+			}
 		}
 	}
 
@@ -115,6 +146,10 @@
 			memberName = user.full_name;
 		}
 		void loadDashboard();
+	});
+
+	onDestroy(() => {
+		clearRefreshTimer();
 	});
 </script>
 
@@ -130,7 +165,9 @@
 		<div class="status-bar">
 			<span class="font-label" style="color: var(--color-on-surface-variant);">
 				<span class="status-dot"></span>
-				System Latency: 12ms — Last Login: Today 08:42 GMT
+				{pendingDepositCount > 0
+					? `${pendingDepositCount} deposit request${pendingDepositCount > 1 ? 's' : ''} awaiting confirmation`
+					: 'Live ledger synchronized'}
 			</span>
 			<button class="btn-ghost" onclick={() => (showDepositModal = true)}>
 				<span class="material-icons" style="font-size: 15px;">add</span>
@@ -168,7 +205,7 @@
 					<p class="stat-label">Loan Balance</p>
 					<p class="stat-big" style="font-size: 2rem;">{formatMoney(loanBalance)}</p>
 					<p style="font-size: 0.75rem; color: var(--color-on-surface-variant); margin: 8px 0 0;">
-						18% APR · 24 months
+						{loanCardNote}
 					</p>
 				</div>
 
@@ -181,9 +218,11 @@
 				</div>
 
 				<div class="stat-block" style="background: var(--color-primary); color: var(--color-on-primary-container);">
-					<p class="stat-label" style="color: rgba(255,255,255,0.6);">Credit Score</p>
-					<p class="stat-big" style="color: white; font-size: 2rem;">782</p>
-					<p style="font-size: 0.75rem; color: rgba(255,255,255,0.5); margin: 8px 0 0;">Excellent</p>
+					<p class="stat-label" style="color: rgba(255,255,255,0.6);">Pending Deposits</p>
+					<p class="stat-big" style="color: white; font-size: 2rem;">{formatMoney(pendingDepositAmount)}</p>
+					<p style="font-size: 0.75rem; color: rgba(255,255,255,0.5); margin: 8px 0 0;">
+						{pendingDepositCount} awaiting mobile money confirmation
+					</p>
 				</div>
 			</div>
 
@@ -192,7 +231,7 @@
 				<div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 20px;">
 					<div>
 						<p class="font-label" style="margin: 0 0 6px;">Loan Repayment Progress</p>
-						<p style="margin: 0; font-size: 0.875rem; color: var(--color-on-surface-variant);">Disbursed Jan 2026 · 24-month term</p>
+						<p style="margin: 0; font-size: 0.875rem; color: var(--color-on-surface-variant);">{loanProgressMeta}</p>
 					</div>
 					<span style="font-size: 1rem; font-weight: 700; color: var(--color-on-surface);">{loanProgressPercent.toFixed(1)}%</span>
 				</div>
@@ -234,7 +273,7 @@
 									{formatAmount(tx.amount)}
 								</p>
 								<span
-									class="badge {tx.status === 'completed' ? (tx.type === 'credit' ? 'badge-success' : tx.type === 'transfer' ? '' : 'badge-pending') : 'badge-pending'}"
+									class="badge {transactionBadgeClass(tx)}"
 									style="margin-top: 4px;"
 								>
 									{tx.status}

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { fetchCurrentStatement, type TransactionApi } from '$lib/api/client';
 	import { getStoredToken } from '$lib/auth/session';
 	import MemberNav from '$lib/components/MemberNav.svelte';
@@ -19,6 +19,7 @@
 	let allTransactions = $state<StatementTransaction[]>([]);
 	let isLoading = $state(true);
 	let loadError = $state('');
+	let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 	let filterType = $state('all'); // 'all', 'credit', 'debit', 'transfer'
 
@@ -50,6 +51,21 @@
 		};
 	}
 
+	function clearRefreshTimer() {
+		if (refreshTimer) {
+			clearTimeout(refreshTimer);
+			refreshTimer = null;
+		}
+	}
+
+	function statusBadgeClass(tx: StatementTransaction): string {
+		if (tx.status === 'failed') return 'badge-error';
+		if (tx.status === 'pending') return 'badge-pending';
+		if (tx.type === 'credit') return 'badge-success';
+		if (tx.type === 'debit') return 'badge-pending';
+		return '';
+	}
+
 	async function loadStatement() {
 		const token = getStoredToken();
 		if (!token) {
@@ -58,6 +74,7 @@
 		}
 
 		isLoading = true;
+		clearRefreshTimer();
 		loadError = '';
 		try {
 			const response = await fetchCurrentStatement(token);
@@ -66,11 +83,20 @@
 			loadError = error instanceof Error ? error.message : 'Unable to load account statement.';
 		} finally {
 			isLoading = false;
+			if (allTransactions.some((tx) => tx.status === 'pending')) {
+				refreshTimer = setTimeout(() => {
+					void loadStatement();
+				}, 15000);
+			}
 		}
 	}
 
 	onMount(() => {
 		void loadStatement();
+	});
+
+	onDestroy(() => {
+		clearRefreshTimer();
 	});
 </script>
 
@@ -134,8 +160,8 @@
 										<p style="margin: 0; font-weight: 700; color: {tx.type === 'credit' ? '#1a7f37' : 'var(--color-on-surface)'};">
 											{formatAmount(tx.amount)}
 										</p>
-										<span class="badge {tx.type === 'credit' ? 'badge-success' : tx.type === 'transfer' ? '' : 'badge-pending'}" style="margin-top: 4px; display: inline-block;">
-											{tx.type}
+										<span class="badge {statusBadgeClass(tx)}" style="margin-top: 4px; display: inline-block;">
+											{tx.status}
 										</span>
 									</td>
 								</tr>

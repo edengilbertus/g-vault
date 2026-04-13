@@ -133,6 +133,8 @@ export type DashboardSummaryResponse = {
 	active_loan_balance: string;
 	next_repayment_date: string | null;
 	total_shares: string;
+	pending_deposit_count: number;
+	pending_deposit_amount: string;
 	recent_transactions: TransactionApi[];
 };
 

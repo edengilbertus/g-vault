@@ -36,6 +36,12 @@ class DashboardSummaryView(APIView):
             .order_by("-created_at")
             .first()
         )
+        pending_deposits = account.transactions.filter(
+            tx_type=Transaction.Type.DEPOSIT,
+            status=Transaction.Status.PENDING,
+        )
+        pending_deposit_count = pending_deposits.count()
+        pending_deposit_amount = pending_deposits.aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
 
         recent_transactions = TransactionSerializer(account.transactions.all()[:5], many=True).data
         payload = {
@@ -44,6 +50,8 @@ class DashboardSummaryView(APIView):
             "active_loan_balance": active_loan.outstanding_balance if active_loan else Decimal("0.00"),
             "next_repayment_date": active_loan.next_repayment_date if active_loan else None,
             "total_shares": account.available_balance,
+            "pending_deposit_count": pending_deposit_count,
+            "pending_deposit_amount": pending_deposit_amount,
             "recent_transactions": recent_transactions,
         }
         return Response(payload, status=status.HTTP_200_OK)

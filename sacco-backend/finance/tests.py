@@ -1,4 +1,5 @@
 from unittest.mock import patch
+from decimal import Decimal
 
 from rest_framework import status
 from rest_framework.authtoken.models import Token
@@ -78,6 +79,24 @@ class FinanceApiTests(APITestCase):
                 member=self.member, event_type="deposit.completed", status=SmsNotification.Status.SENT
             ).exists()
         )
+
+    def test_dashboard_summary_reports_pending_mobile_deposits(self):
+        account = SavingsAccount.objects.get(member=self.member)
+        Transaction.objects.create(
+            account=account,
+            tx_type=Transaction.Type.DEPOSIT,
+            direction=Transaction.Direction.CREDIT,
+            amount="3000.00",
+            status=Transaction.Status.PENDING,
+            description="Deposit request via MTN (Pending confirmation)",
+            external_reference="+256700123456",
+        )
+
+        response = self.client.get("/api/finance/dashboard/summary/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["pending_deposit_count"], 1)
+        self.assertEqual(Decimal(str(response.data["pending_deposit_amount"])), Decimal("3000.00"))
 
     def test_member_can_submit_loan_application(self):
         payload = {
