@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { login, register } from '$lib/api/client';
+	import { persistSession } from '$lib/auth/session';
 
 	let activeTab = $state<'login' | 'register'>('login');
 	let showPassword = $state(false);
@@ -22,13 +24,17 @@
 		e.preventDefault();
 		errorMsg = '';
 		isLoading = true;
-		await new Promise((r) => setTimeout(r, 800));
-		isLoading = false;
-		// Simulate role routing
-		if (loginEmail.includes('admin')) {
-			goto('/admin');
-		} else {
-			goto('/dashboard');
+		try {
+			const result = await login({
+				email: loginEmail.trim(),
+				password: loginPassword
+			});
+			persistSession(result.token, result.user);
+			goto(result.user.is_staff ? '/admin' : '/dashboard');
+		} catch (error) {
+			errorMsg = error instanceof Error ? error.message : 'Authentication failed. Please try again.';
+		} finally {
+			isLoading = false;
 		}
 	}
 
@@ -40,9 +46,21 @@
 			return;
 		}
 		isLoading = true;
-		await new Promise((r) => setTimeout(r, 800));
-		isLoading = false;
-		goto('/dashboard');
+		try {
+			const result = await register({
+				full_name: regName.trim(),
+				email: regEmail.trim(),
+				phone_number: regPhone.trim(),
+				password: regPassword,
+				password_confirm: regConfirm
+			});
+			persistSession(result.token, result.user);
+			goto(result.user.is_staff ? '/admin' : '/dashboard');
+		} catch (error) {
+			errorMsg = error instanceof Error ? error.message : 'Registration failed. Please try again.';
+		} finally {
+			isLoading = false;
+		}
 	}
 </script>
 
@@ -55,11 +73,12 @@
 	<aside class="auth-brand animate-fade-up stagger-1">
 		<div class="auth-brand-inner">
 			<p class="font-label" style="color: var(--color-on-surface-variant); margin-bottom: 40px;">
-				EST. 2024
+				EST. 2026
 			</p>
-			<h1 class="font-display" style="color: var(--color-on-primary-container); margin: 0 0 24px;">
-				G<br />VAULT
-			</h1>
+			<div style="display: flex; align-items: center; gap: 16px; margin: 0 0 32px;">
+				<h1 class="font-display" style="color: var(--color-on-primary-container); margin: 0; font-size: 8rem; line-height: 0.8;">G</h1>
+				<span class="font-display" style="font-size: 1.5rem; letter-spacing: 0.5em; color: var(--color-on-primary-container); font-weight: 700; padding-top: 1rem;">VAULT</span>
+			</div>
 			<p class="auth-tagline">
 				Architectural precision<br />in every transaction.
 			</p>
@@ -262,7 +281,7 @@
 	}
 
 	.auth-brand::after {
-		content: 'M';
+		content: 'G';
 		position: absolute;
 		bottom: -60px;
 		right: -30px;

@@ -30,11 +30,21 @@ class DepositSerializer(serializers.Serializer):
             raise serializers.ValidationError("Amount must be greater than zero.")
         return value
 
+    def validate(self, attrs):
+        payment_method = attrs.get("payment_method")
+        phone_number = str(attrs.get("phone_number", "")).strip()
+        if payment_method in {"mtn", "airtel"} and not phone_number:
+            raise serializers.ValidationError(
+                {"phone_number": "Phone number is required for mobile money deposits."}
+            )
+        return attrs
+
 
 class LoanApplicationCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = LoanApplication
         fields = (
+            "id",
             "amount",
             "purpose",
             "term_months",
@@ -45,7 +55,10 @@ class LoanApplicationCreateSerializer(serializers.ModelSerializer):
             "applicant_id_number",
             "employer",
             "monthly_salary",
+            "status",
+            "created_at",
         )
+        read_only_fields = ("id", "status", "created_at")
 
     def validate_amount(self, value):
         if value <= 0:
@@ -111,3 +124,44 @@ class LoanAccountSerializer(serializers.ModelSerializer):
 class LoanDecisionSerializer(serializers.Serializer):
     action = serializers.ChoiceField(choices=["approve", "reject"])
     review_note = serializers.CharField(required=False, allow_blank=True)
+
+
+class TransferSerializer(serializers.Serializer):
+    transfer_type = serializers.ChoiceField(choices=["internal", "external"])
+    destination = serializers.CharField(max_length=255)
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    note = serializers.CharField(required=False, allow_blank=True, max_length=255)
+
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Amount must be greater than zero.")
+        return value
+
+
+class WithdrawalSerializer(serializers.Serializer):
+    destination_type = serializers.ChoiceField(choices=["bank", "mobile"])
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    bank_name = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    account_number = serializers.CharField(required=False, allow_blank=True, max_length=64)
+    routing_number = serializers.CharField(required=False, allow_blank=True, max_length=64)
+    mobile_network = serializers.ChoiceField(choices=["mtn", "airtel"], required=False)
+    phone_number = serializers.CharField(required=False, allow_blank=True, max_length=32)
+
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Amount must be greater than zero.")
+        return value
+
+    def validate(self, attrs):
+        destination_type = attrs["destination_type"]
+        if destination_type == "bank":
+            required_fields = ("bank_name", "account_number", "routing_number")
+        else:
+            required_fields = ("mobile_network", "phone_number")
+
+        missing_fields = [field for field in required_fields if not attrs.get(field)]
+        if missing_fields:
+            raise serializers.ValidationError(
+                {field: "This field is required for the selected destination type." for field in missing_fields}
+            )
+        return attrs

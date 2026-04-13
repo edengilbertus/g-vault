@@ -1,22 +1,121 @@
 <script lang="ts">
-	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import DepositModal from '$lib/components/DepositModal.svelte';
+	import { fetchDashboardSummary, fetchMyLoanAccounts, type TransactionApi } from '$lib/api/client';
+	import { getStoredToken, getStoredUser } from '$lib/auth/session';
 	import MemberNav from '$lib/components/MemberNav.svelte';
+	import { onMount } from 'svelte';
 
 	let showDepositModal = $state(false);
+	let isLoading = $state(true);
+	let loadError = $state('');
 
-	const transactions = [
-		{ id: 'T001', merchant: 'APPLE STORE — METROPOLIS', category: 'Electronic Equipment', amount: -1299.00, date: 'Apr 12', type: 'debit' },
-		{ id: 'T002', merchant: 'LOAN REPAYMENT — AUTO', category: 'Recurring Transaction', amount: -1250.00, date: 'Apr 10', type: 'debit' },
-		{ id: 'T003', merchant: 'GLOBAL TECH CORP SALARY', category: 'Direct Deposit', amount: +8500.00, date: 'Apr 05', type: 'credit' },
-		{ id: 'T004', merchant: 'VERIDIAN UTILITIES', category: 'Bill Payment', amount: -245.80, date: 'Apr 03', type: 'debit' },
-		{ id: 'T005', merchant: 'INTERNAL TRANSFER TO SAVINGS', category: 'Automated Vault', amount: -2000.00, date: 'Apr 01', type: 'transfer' },
-	];
+	let memberName = $state('Member');
+	let savingsBalance = $state(0);
+	let loanBalance = $state(0);
+	let hasNextRepayment = $state(false);
+	let nextRepaymentDateLabel = $state('—');
+	let estimatedMonthlyRepayment = $state(0);
+	let loanProgressPercent = $state(0);
+	let loanPaidAmount = $state(0);
+	let loanRemainingAmount = $state(0);
 
-	function formatAmount(n: number) {
+	type DashboardTransaction = {
+		id: string;
+		merchant: string;
+		category: string;
+		amount: number;
+		date: string;
+		type: 'credit' | 'debit' | 'transfer';
+		status: string;
+	};
+
+	let transactions = $state<DashboardTransaction[]>([]);
+
+	function formatAmount(n: number): string {
 		const abs = Math.round(Math.abs(n)).toLocaleString('en-UG');
 		return (n >= 0 ? '+' : '−') + ' UGX ' + abs;
 	}
+
+	function formatMoney(n: number): string {
+		return `UGX ${Math.round(n).toLocaleString('en-UG')}`;
+	}
+
+	function toTransactionView(tx: TransactionApi): DashboardTransaction {
+		const createdAt = new Date(tx.created_at);
+		const numericAmount = Number(tx.amount);
+		const signedAmount = tx.direction === 'debit' ? -numericAmount : numericAmount;
+		const normalizedType: DashboardTransaction['type'] =
+			tx.tx_type === 'transfer' ? 'transfer' : tx.direction === 'credit' ? 'credit' : 'debit';
+
+		return {
+			id: tx.reference,
+			merchant: tx.description || tx.tx_type.replaceAll('_', ' ').toUpperCase(),
+			category: tx.tx_type.replaceAll('_', ' '),
+			amount: signedAmount,
+			date: createdAt.toLocaleDateString('en-UG', { month: 'short', day: 'numeric' }),
+			type: normalizedType,
+			status: tx.status
+		};
+	}
+
+	async function loadDashboard() {
+		const token = getStoredToken();
+		if (!token) {
+			goto('/');
+			return;
+		}
+
+		isLoading = true;
+		loadError = '';
+		try {
+			const [summary, loanAccounts] = await Promise.all([
+				fetchDashboardSummary(token),
+				fetchMyLoanAccounts(token)
+			]);
+
+			savingsBalance = Number(summary.savings_balance);
+			transactions = summary.recent_transactions.map(toTransactionView);
+			hasNextRepayment = Boolean(summary.next_repayment_date);
+			nextRepaymentDateLabel = summary.next_repayment_date
+				? new Date(summary.next_repayment_date).toLocaleDateString('en-UG', {
+						month: 'short',
+						day: 'numeric',
+						year: 'numeric'
+					})
+				: 'No repayment due';
+
+			const parsedLoans = Array.isArray(loanAccounts) ? loanAccounts : (loanAccounts as any).results || [];
+			const activeLoan = parsedLoans.find((loan: any) => loan.status === 'active');
+			if (activeLoan) {
+				loanBalance = Number(activeLoan.outstanding_balance);
+				estimatedMonthlyRepayment = Math.round(loanBalance / activeLoan.term_months);
+				loanRemainingAmount = loanBalance;
+
+				const totalLoanCost = Number(activeLoan.principal) * 1.18;
+				loanPaidAmount = Math.max(totalLoanCost - loanBalance, 0);
+				loanProgressPercent = totalLoanCost > 0 ? Math.min(100, (loanPaidAmount / totalLoanCost) * 100) : 0;
+			} else {
+				loanBalance = 0;
+				estimatedMonthlyRepayment = 0;
+				loanProgressPercent = 0;
+				loanPaidAmount = 0;
+				loanRemainingAmount = 0;
+			}
+		} catch (error) {
+			loadError = error instanceof Error ? error.message : 'Unable to load dashboard data.';
+		} finally {
+			isLoading = false;
+		}
+	}
+
+	onMount(() => {
+		const user = getStoredUser();
+		if (user) {
+			memberName = user.full_name;
+		}
+		void loadDashboard();
+	});
 </script>
 
 <svelte:head>
@@ -45,25 +144,29 @@
 				<h1 class="font-display" style="margin: 0;">MEMBER<br />OVERVIEW</h1>
 				<div>
 					<p class="font-label" style="margin: 0 0 4px;">Welcome back</p>
-					<p style="font-size: 1.125rem; font-weight: 700; margin: 0; color: var(--color-on-surface);">Julian Thorne</p>
+					<p style="font-size: 1.125rem; font-weight: 700; margin: 0; color: var(--color-on-surface);">{memberName}</p>
 					<span class="badge" style="margin-top: 8px;">Premium Member</span>
 				</div>
 			</div>
+
+			{#if loadError}
+				<p class="text-error" style="margin: 0;">{loadError}</p>
+			{/if}
 
 			<!-- Stat Cards -->
 			<div class="stats-row animate-fade-up stagger-2">
 				<div class="stat-block">
 					<p class="stat-label">Savings Balance</p>
-					<p class="stat-big">UGX 142,850</p>
+					<p class="stat-big">{formatMoney(savingsBalance)}</p>
 					<p style="font-size: 0.75rem; color: var(--color-on-surface-variant); margin: 8px 0 0; display: flex; align-items: center; gap: 4px;">
 						<span class="material-icons" style="font-size: 14px; color: #1a7f37;">trending_up</span>
-						+4.2% this month
+						{isLoading ? 'Refreshing...' : 'Updated from live ledger'}
 					</p>
 				</div>
 
 				<div class="stat-block" style="background: var(--color-surface-container);">
 					<p class="stat-label">Loan Balance</p>
-					<p class="stat-big" style="font-size: 2rem;">UGX 45,000</p>
+					<p class="stat-big" style="font-size: 2rem;">{formatMoney(loanBalance)}</p>
 					<p style="font-size: 0.75rem; color: var(--color-on-surface-variant); margin: 8px 0 0;">
 						18% APR · 24 months
 					</p>
@@ -71,8 +174,10 @@
 
 				<div class="stat-block" style="background: var(--color-surface-container-low);">
 					<p class="stat-label">Next Repayment</p>
-					<p class="stat-big" style="font-size: 2rem;">UGX 1,250</p>
-					<p style="font-size: 0.75rem; color: var(--color-on-surface-variant); margin: 8px 0 0;">Due Apr 30, 2025</p>
+					<p class="stat-big" style="font-size: 2rem;">{formatMoney(estimatedMonthlyRepayment)}</p>
+					<p style="font-size: 0.75rem; color: var(--color-on-surface-variant); margin: 8px 0 0;">
+						{hasNextRepayment ? `Due ${nextRepaymentDateLabel}` : nextRepaymentDateLabel}
+					</p>
 				</div>
 
 				<div class="stat-block" style="background: var(--color-primary); color: var(--color-on-primary-container);">
@@ -87,16 +192,16 @@
 				<div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 20px;">
 					<div>
 						<p class="font-label" style="margin: 0 0 6px;">Loan Repayment Progress</p>
-						<p style="margin: 0; font-size: 0.875rem; color: var(--color-on-surface-variant);">Disbursed Jan 2024 · 24-month term</p>
+						<p style="margin: 0; font-size: 0.875rem; color: var(--color-on-surface-variant);">Disbursed Jan 2026 · 24-month term</p>
 					</div>
-					<span style="font-size: 1rem; font-weight: 700; color: var(--color-on-surface);">62.5%</span>
+					<span style="font-size: 1rem; font-weight: 700; color: var(--color-on-surface);">{loanProgressPercent.toFixed(1)}%</span>
 				</div>
 				<div class="progress-bar" style="height: 4px;">
-					<div class="progress-fill" style="width: 62.5%;"></div>
+					<div class="progress-fill" style={`width: ${loanProgressPercent.toFixed(1)}%;`}></div>
 				</div>
 				<div style="display: flex; justify-content: space-between; margin-top: 12px;">
-					<span class="font-label">UGX 28,125 paid</span>
-					<span class="font-label">UGX 16,875 remaining</span>
+					<span class="font-label">{formatMoney(loanPaidAmount)} paid</span>
+					<span class="font-label">{formatMoney(loanRemainingAmount)} remaining</span>
 				</div>
 			</div>
 
@@ -111,7 +216,7 @@
 				</div>
 
 				<div style="margin-top: 24px;">
-					{#each transactions as tx, i}
+					{#each transactions as tx}
 						<div class="tx-row" style="border-bottom: 1px solid var(--color-surface-container-high);">
 							<div style="display: flex; align-items: center; gap: 16px;">
 								<div style="width: 40px; height: 40px; background: var(--color-surface-container-high); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
@@ -128,12 +233,20 @@
 								<p style="margin: 0; font-size: 0.9375rem; font-weight: 700; color: {tx.type === 'credit' ? '#1a7f37' : 'var(--color-on-surface)'};">
 									{formatAmount(tx.amount)}
 								</p>
-								<span class="badge {tx.type === 'credit' ? 'badge-success' : tx.type === 'transfer' ? '' : 'badge-pending'}" style="margin-top: 4px;">
-									{tx.type}
+								<span
+									class="badge {tx.status === 'completed' ? (tx.type === 'credit' ? 'badge-success' : tx.type === 'transfer' ? '' : 'badge-pending') : 'badge-pending'}"
+									style="margin-top: 4px;"
+								>
+									{tx.status}
 								</span>
 							</div>
 						</div>
 					{/each}
+					{#if transactions.length === 0}
+						<p style="margin: 16px 0 0; color: var(--color-on-surface-variant);">
+							{isLoading ? 'Loading recent transactions...' : 'No recent transactions found.'}
+						</p>
+					{/if}
 				</div>
 			</div>
 
@@ -163,7 +276,7 @@
 
 		<!-- Footer -->
 		<footer class="footer">
-			<p class="font-label" style="margin: 0;">© 2024 G VAULT</p>
+			<p class="font-label" style="margin: 0;">© 2026 G VAULT</p>
 			<div class="footer-links">
 				<a href="/legal/privacy" class="footer-link">Privacy</a>
 				<a href="/legal/terms" class="footer-link">Terms</a>
@@ -175,7 +288,7 @@
 </div>
 
 {#if showDepositModal}
-	<DepositModal onclose={() => (showDepositModal = false)} />
+	<DepositModal onclose={() => (showDepositModal = false)} onsuccess={loadDashboard} />
 {/if}
 
 <style>

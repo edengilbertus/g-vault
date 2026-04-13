@@ -1,11 +1,18 @@
 <script lang="ts">
-	let { onclose } = $props<{ onclose: () => void }>();
+	import { createDeposit } from '$lib/api/client';
+	import { getStoredToken } from '$lib/auth/session';
+
+	let { onclose, onsuccess } = $props<{ onclose: () => void; onsuccess?: () => void }>();
 
 	let selectedAmount = $state('');
 	let customAmount = $state('');
 	let paymentMethod = $state<'mtn' | 'airtel' | 'card' | 'bank'>('mtn');
 	let phoneNumber = $state('');
 	let step = $state<'select' | 'confirm' | 'processing' | 'success'>('select');
+	let errorMsg = $state('');
+	let transactionReference = $state('');
+	let confirmedAmount = $state(0);
+	let isPendingDeposit = $state(false);
 
 	const presets = [50000, 100000, 200000, 500000, 1000000];
 
@@ -20,13 +27,36 @@
 
 	async function handleContinue() {
 		if (!getAmount()) return;
+		errorMsg = '';
 		step = 'confirm';
 	}
 
 	async function handleConfirm() {
+		const amount = getAmount();
+		const token = getStoredToken();
+		if (!token) {
+			errorMsg = 'Session expired. Please sign in again.';
+			step = 'select';
+			return;
+		}
+
 		step = 'processing';
-		await new Promise((r) => setTimeout(r, 2500));
-		step = 'success';
+		errorMsg = '';
+		try {
+			const response = await createDeposit(token, {
+				amount,
+				payment_method: paymentMethod,
+				phone_number: phoneNumber || undefined
+			});
+			transactionReference = response.transaction.reference;
+			confirmedAmount = Number(response.transaction.amount);
+			isPendingDeposit = response.transaction.status === 'pending';
+			step = 'success';
+			onsuccess?.();
+		} catch (error) {
+			errorMsg = error instanceof Error ? error.message : 'Deposit request failed.';
+			step = 'select';
+		}
 	}
 
 	function formatMoney(n: number) {
@@ -136,6 +166,9 @@
 				Continue
 				<span class="material-icons" style="font-size: 16px;">arrow_forward</span>
 			</button>
+			{#if errorMsg}
+				<p class="text-error" style="margin: 12px 0 0;">{errorMsg}</p>
+			{/if}
 
 		{:else if step === 'confirm'}
 			<div style="margin-bottom: 40px;">
@@ -185,14 +218,22 @@
 
 		{:else if step === 'success'}
 			<div style="text-align: center; padding: 20px 0;">
-				<span class="material-icons" style="font-size: 56px; color: #1a7f37; margin-bottom: 20px; display: block;">check_circle_outline</span>
-				<h2 class="font-headline-md" style="margin: 0 0 12px;">Deposit Successful</h2>
+				<span class="material-icons" style="font-size: 56px; color: {isPendingDeposit ? 'var(--color-on-surface-variant)' : '#1a7f37'}; margin-bottom: 20px; display: block;">
+					{isPendingDeposit ? 'schedule' : 'check_circle_outline'}
+				</span>
+				<h2 class="font-headline-md" style="margin: 0 0 12px;">
+					{isPendingDeposit ? 'Deposit Request Initiated' : 'Deposit Successful'}
+				</h2>
 				<p style="color: var(--color-on-surface-variant); margin: 0 0 32px; font-size: 0.875rem; line-height: 1.6;">
-					{formatMoney(getAmount())} has been deposited to your Savings account. Funds are available immediately.
+					{#if isPendingDeposit}
+						A mobile money prompt was sent for {formatMoney(confirmedAmount || getAmount())}. Approve on your phone to complete this deposit.
+					{:else}
+						{formatMoney(confirmedAmount || getAmount())} has been deposited to your Savings account. Funds are available immediately.
+					{/if}
 				</p>
 				<p class="font-label" style="margin: 0 0 6px;">Transaction Reference</p>
 				<p style="font-size: 1rem; font-weight: 800; letter-spacing: 0.08em; margin: 0 0 40px; font-family: monospace;">
-					TXN-{Date.now().toString().slice(-8)}
+					{transactionReference}
 				</p>
 				<button class="btn-primary" style="width: 100%; justify-content: center;" onclick={onclose}>
 					Done

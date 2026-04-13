@@ -1,15 +1,75 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
+	import { fetchDashboardSummary, fetchMyLoanAccounts } from '$lib/api/client';
+	import { getStoredToken } from '$lib/auth/session';
 	import MemberNav from '$lib/components/MemberNav.svelte';
 
-	const accounts = [
-		{ id: 'ACC-001', name: 'Main Savings', type: 'Savings', balance: 125000.00, currency: 'UGX', status: 'Active' },
-		{ id: 'ACC-002', name: 'Emergency Fund', type: 'Target Savings', balance: 17850.00, currency: 'UGX', status: 'Active' },
-		{ id: 'FD-2024', name: '12-Month Fixed Deposit', type: 'Fixed Deposit', balance: 50000.00, currency: 'UGX', status: 'Locked', rate: '5.25%' },
-	];
+	type AccountView = {
+		id: string;
+		name: string;
+		type: string;
+		balance: number;
+		currency: 'UGX';
+		status: 'Active' | 'Locked' | 'Closed';
+		rate?: string;
+	};
+
+	let accounts = $state<AccountView[]>([]);
+	let totalLiquidAssets = $state(0);
+	let isLoading = $state(true);
+	let loadError = $state('');
 
 	function f(n: number) {
 		return Math.round(n).toLocaleString('en-UG');
 	}
+
+	async function loadAccounts() {
+		const token = getStoredToken();
+		if (!token) {
+			goto('/');
+			return;
+		}
+
+		isLoading = true;
+		loadError = '';
+		try {
+			const [summary, loanAccounts] = await Promise.all([
+				fetchDashboardSummary(token),
+				fetchMyLoanAccounts(token)
+			]);
+
+			const savingsBalance = Number(summary.savings_balance);
+			totalLiquidAssets = savingsBalance;
+			const loanList = Array.isArray(loanAccounts) ? loanAccounts : (loanAccounts as any).results || [];
+			accounts = [
+				{
+					id: 'ACC-001',
+					name: 'Main Savings',
+					type: 'Savings',
+					balance: savingsBalance,
+					currency: 'UGX',
+					status: 'Active'
+				},
+				...loanList.map((loan: any) => ({
+					id: `LN-${String(loan.application_id).padStart(5, '0')}`,
+					name: 'Loan Account',
+					type: `Loan (${loan.term_months} months)`,
+					balance: Number(loan.outstanding_balance),
+					currency: 'UGX' as const,
+					status: loan.status === 'active' ? 'Active' : loan.status === 'closed' ? 'Closed' : 'Locked'
+				}))
+			];
+		} catch (error) {
+			loadError = error instanceof Error ? error.message : 'Unable to load account portfolio.';
+		} finally {
+			isLoading = false;
+		}
+	}
+
+	onMount(() => {
+		void loadAccounts();
+	});
 </script>
 
 <svelte:head>
@@ -34,12 +94,15 @@
 				<h1 class="font-display" style="margin: 0;">ACCOUNT<br />PORTFOLIO</h1>
 				<div>
 					<p class="font-label" style="margin: 0 0 4px;">Total Liquid Assets</p>
-					<p style="font-size: 1.5rem; font-weight: 700; margin: 0; color: var(--color-on-surface);">UGX 192,850</p>
+					<p style="font-size: 1.5rem; font-weight: 700; margin: 0; color: var(--color-on-surface);">UGX {f(totalLiquidAssets)}</p>
 				</div>
 			</div>
 
 			<!-- Accounts List -->
 			<div class="animate-fade-up stagger-2">
+				{#if loadError}
+					<p class="text-error" style="margin: 0 0 16px;">{loadError}</p>
+				{/if}
 				<div class="accounts-grid">
 					{#each accounts as acc}
 						<div class="account-card">
@@ -67,13 +130,20 @@
 							</div>
 						</div>
 					{/each}
+					{#if accounts.length === 0}
+						<div class="account-card" style="grid-column: 1 / -1; text-align: center;">
+							<p style="margin: 0; color: var(--color-on-surface-variant);">
+								{isLoading ? 'Loading account portfolio...' : 'No accounts available.'}
+							</p>
+						</div>
+					{/if}
 				</div>
 			</div>
 		</div>
 
 		<!-- Footer -->
 		<footer class="footer">
-			<p class="font-label" style="margin: 0;">© 2024 G VAULT</p>
+			<p class="font-label" style="margin: 0;">© 2026 G VAULT</p>
 			<div class="footer-links">
 				<a href="/legal/privacy" class="footer-link">Privacy</a>
 				<a href="/legal/terms" class="footer-link">Terms</a>

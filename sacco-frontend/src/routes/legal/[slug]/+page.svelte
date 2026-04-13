@@ -40,7 +40,7 @@
 			<div class="document-header">
 				<p class="font-label" style="margin: 0 0 16px; color: var(--color-on-surface-variant);">Legal & Compliance</p>
 				<h1 class="font-display" style="margin: 0;">{pageContent.title}</h1>
-				<p style="margin: 16px 0 0; font-size: 0.75rem; font-family: monospace; color: var(--color-on-surface-variant);">Last Updated: April 2024</p>
+				<p style="margin: 16px 0 0; font-size: 0.75rem; font-family: monospace; color: var(--color-on-surface-variant);">Last Updated: April 2026</p>
 			</div>
 
 			<div class="document-body">
@@ -58,7 +58,7 @@
 
 	<!-- Minimal Footer -->
 	<footer class="footer">
-		<p class="font-label" style="margin: 0;">© 2024 G VAULT</p>
+		<p class="font-label" style="margin: 0;">© 2026 G VAULT</p>
 		<div class="footer-links">
 			<a href="/legal/privacy" class="footer-link">Privacy</a>
 			<a href="/legal/terms" class="footer-link">Terms</a>

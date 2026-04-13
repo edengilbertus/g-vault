@@ -1,4 +1,8 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
+	import { createWithdrawal, fetchDashboardSummary } from '$lib/api/client';
+	import { getStoredToken } from '$lib/auth/session';
 	import MemberNav from '$lib/components/MemberNav.svelte';
 
 	let destinationType = $state('bank'); // 'bank' or 'mobile'
@@ -14,15 +18,77 @@
 	let phoneNumber = $state('');
 
 	let isSubmitting = $state(false);
+	let isLoadingBalance = $state(true);
 	let submitted = $state(false);
+	let errorMsg = $state('');
+	let referenceId = $state('');
+	let availableBalance = $state(0);
+
+	function formatMoney(n: number) {
+		return `UGX ${Math.round(n).toLocaleString('en-UG')}`;
+	}
+
+	async function loadBalance() {
+		const token = getStoredToken();
+		if (!token) {
+			goto('/');
+			return;
+		}
+
+		isLoadingBalance = true;
+		try {
+			const summary = await fetchDashboardSummary(token);
+			availableBalance = Number(summary.savings_balance);
+		} catch (error) {
+			errorMsg = error instanceof Error ? error.message : 'Unable to load account balance.';
+		} finally {
+			isLoadingBalance = false;
+		}
+	}
 
 	async function handleWithdrawal(e: SubmitEvent) {
 		e.preventDefault();
+		const token = getStoredToken();
+		if (!token) {
+			goto('/');
+			return;
+		}
+		const withdrawalAmount = Number(amount);
+		if (!withdrawalAmount || withdrawalAmount <= 0) {
+			errorMsg = 'Enter a valid withdrawal amount.';
+			return;
+		}
+		if (withdrawalAmount > availableBalance) {
+			errorMsg = 'Insufficient balance for withdrawal.';
+			return;
+		}
+
+		errorMsg = '';
 		isSubmitting = true;
-		await new Promise((r) => setTimeout(r, 1500));
-		isSubmitting = false;
-		submitted = true;
+		try {
+			const response = await createWithdrawal(token, {
+				destination_type: destinationType as 'bank' | 'mobile',
+				amount: withdrawalAmount,
+				bank_name: destinationType === 'bank' ? bankName.trim() : undefined,
+				account_number: destinationType === 'bank' ? accountNumber.trim() : undefined,
+				routing_number: destinationType === 'bank' ? routingNumber.trim() : undefined,
+				mobile_network:
+					destinationType === 'mobile' ? (mobileNetwork as 'mtn' | 'airtel') : undefined,
+				phone_number: destinationType === 'mobile' ? phoneNumber.trim() : undefined
+			});
+			referenceId = response.transaction.reference;
+			availableBalance = Number(response.new_balance);
+			submitted = true;
+		} catch (error) {
+			errorMsg = error instanceof Error ? error.message : 'Withdrawal failed.';
+		} finally {
+			isSubmitting = false;
+		}
 	}
+
+	onMount(() => {
+		void loadBalance();
+	});
 </script>
 
 <svelte:head>
@@ -30,7 +96,7 @@
 </svelte:head>
 
 <div class="page-wrap">
-	<MemberNav active="" /> <!-- No exact active tab for withdrawal -->
+	<MemberNav active="withdrawal" />
 
 	<div class="main-content">
 		<div class="loan-body">
@@ -43,7 +109,7 @@
 						Your withdrawal of <strong>UGX {Number(amount).toLocaleString('en-UG')}</strong> has been initiated. Funds will be available in {destinationType === 'bank' ? '1-3 business days' : 'a few minutes'}.
 					</p>
 					<p class="font-label" style="margin: 0 0 8px;">Reference ID</p>
-					<p style="font-size: 1.5rem; font-weight: 800; letter-spacing: 0.08em; margin: 0 0 40px; font-family: monospace;">WD-{Math.floor(Math.random() * 900000) + 100000}</p>
+					<p style="font-size: 1.5rem; font-weight: 800; letter-spacing: 0.08em; margin: 0 0 40px; font-family: monospace;">{referenceId}</p>
 					
 					<div style="display: flex; gap: 16px; justify-content: center;">
 						<a href="/dashboard" class="btn-primary">Return to Dashboard</a>
@@ -61,8 +127,21 @@
 					
 					<div class="input-group" style="margin-bottom: 32px;">
 						<label for="amount" class="input-label">Amount (UGX)</label>
-						<input id="amount" type="number" class="input-field" placeholder="0" bind:value={amount} min="1" step="1" max="142850" required style="font-size: 2rem; padding: 20px;" />
-						<p style="font-size: 0.75rem; color: var(--color-on-surface-variant); margin: 8px 0 0;">Available Balance: UGX 142,850</p>
+						<input
+							id="amount"
+							type="number"
+							class="input-field"
+							placeholder="0"
+							bind:value={amount}
+							min="1"
+							step="1"
+							max={availableBalance > 0 ? String(Math.floor(availableBalance)) : undefined}
+							required
+							style="font-size: 2rem; padding: 20px;"
+						/>
+						<p style="font-size: 0.75rem; color: var(--color-on-surface-variant); margin: 8px 0 0;">
+							{isLoadingBalance ? 'Loading available balance...' : `Available Balance: ${formatMoney(availableBalance)}`}
+						</p>
 					</div>
 
 					<p class="font-label" style="margin: 0 0 16px;">Destination</p>
@@ -104,7 +183,6 @@
 									<option value="">Select network...</option>
 									<option value="mtn">MTN Mobile Money</option>
 									<option value="airtel">Airtel Money</option>
-									<option value="mtn">MTN Mobile Money</option>
 								</select>
 							</div>
 							<div class="input-group" style="grid-column: 1 / -1;">
@@ -115,7 +193,12 @@
 					</div>
 
 					<div style="margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--color-surface-container-high);">
-						<button type="submit" class="btn-primary" style="width: 100%; justify-content: center;" disabled={isSubmitting || !amount}>
+						<button
+							type="submit"
+							class="btn-primary"
+							style="width: 100%; justify-content: center;"
+							disabled={isSubmitting || isLoadingBalance || !amount}
+						>
 							{#if isSubmitting}
 								<span class="material-icons spin" style="font-size: 16px;">autorenew</span>
 								Processing...
@@ -125,13 +208,16 @@
 							{/if}
 						</button>
 					</div>
+					{#if errorMsg}
+						<p class="text-error" style="margin: 16px 0 0;">{errorMsg}</p>
+					{/if}
 				</form>
 			{/if}
 		</div>
 
 		<!-- Footer -->
 		<footer class="footer">
-			<p class="font-label" style="margin: 0;">© 2024 G VAULT</p>
+			<p class="font-label" style="margin: 0;">© 2026 G VAULT</p>
 			<div class="footer-links">
 				<a href="/legal/privacy" class="footer-link">Privacy</a>
 				<a href="/legal/terms" class="footer-link">Terms</a>

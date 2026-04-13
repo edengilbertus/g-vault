@@ -1,16 +1,24 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
+	import { fetchCurrentStatement, type TransactionApi } from '$lib/api/client';
+	import { getStoredToken } from '$lib/auth/session';
 	import MemberNav from '$lib/components/MemberNav.svelte';
 
-	const allTransactions = [
-		{ id: 'T008', merchant: 'SALARY DEPOSIT', category: 'Direct Deposit', amount: 8500.00, date: 'Apr 25, 2024', time: '09:00', type: 'credit', status: 'completed' },
-		{ id: 'T007', merchant: 'MORTGAGE PAYMENT', category: 'Housing', amount: -2100.00, date: 'Apr 20, 2024', time: '14:30', type: 'debit', status: 'completed' },
-		{ id: 'T006', merchant: 'WIRE TRANSFER OUT', category: 'Transfer', amount: -500.00, date: 'Apr 18, 2024', time: '11:15', type: 'transfer', status: 'completed' },
-		{ id: 'T001', merchant: 'APPLE STORE — METROPOLIS', category: 'Electronic Equipment', amount: -1299.00, date: 'Apr 12, 2024', time: '16:45', type: 'debit', status: 'completed' },
-		{ id: 'T002', merchant: 'LOAN REPAYMENT — AUTO', category: 'Recurring Transaction', amount: -1250.00, date: 'Apr 10, 2024', time: '01:00', type: 'debit', status: 'completed' },
-		{ id: 'T003', merchant: 'GLOBAL TECH CORP SALARY', category: 'Direct Deposit', amount: 8500.00, date: 'Apr 05, 2024', time: '09:00', type: 'credit', status: 'completed' },
-		{ id: 'T004', merchant: 'VERIDIAN UTILITIES', category: 'Bill Payment', amount: -245.80, date: 'Apr 03, 2024', time: '10:20', type: 'debit', status: 'completed' },
-		{ id: 'T005', merchant: 'INTERNAL TRANSFER TO SAVINGS', category: 'Automated Vault', amount: -2000.00, date: 'Apr 01, 2024', time: '23:55', type: 'transfer', status: 'completed' },
-	];
+	type StatementTransaction = {
+		id: string;
+		merchant: string;
+		category: string;
+		amount: number;
+		date: string;
+		time: string;
+		type: 'credit' | 'debit' | 'transfer';
+		status: string;
+	};
+
+	let allTransactions = $state<StatementTransaction[]>([]);
+	let isLoading = $state(true);
+	let loadError = $state('');
 
 	let filterType = $state('all'); // 'all', 'credit', 'debit', 'transfer'
 
@@ -22,6 +30,48 @@
 		const abs = Math.round(Math.abs(n)).toLocaleString('en-UG');
 		return (n >= 0 ? '+' : '−') + ' UGX ' + abs;
 	}
+
+	function toTransactionView(tx: TransactionApi): StatementTransaction {
+		const createdAt = new Date(tx.created_at);
+		const amount = Number(tx.amount);
+		const signedAmount = tx.direction === 'debit' ? -amount : amount;
+		const type: StatementTransaction['type'] =
+			tx.tx_type === 'transfer' ? 'transfer' : tx.direction === 'credit' ? 'credit' : 'debit';
+
+		return {
+			id: tx.reference,
+			merchant: tx.description || tx.tx_type.replaceAll('_', ' ').toUpperCase(),
+			category: tx.tx_type.replaceAll('_', ' '),
+			amount: signedAmount,
+			date: createdAt.toLocaleDateString('en-UG', { month: 'short', day: 'numeric', year: 'numeric' }),
+			time: createdAt.toLocaleTimeString('en-UG', { hour: '2-digit', minute: '2-digit', hour12: false }),
+			type,
+			status: tx.status
+		};
+	}
+
+	async function loadStatement() {
+		const token = getStoredToken();
+		if (!token) {
+			goto('/');
+			return;
+		}
+
+		isLoading = true;
+		loadError = '';
+		try {
+			const response = await fetchCurrentStatement(token);
+			allTransactions = response.transactions.map(toTransactionView);
+		} catch (error) {
+			loadError = error instanceof Error ? error.message : 'Unable to load account statement.';
+		} finally {
+			isLoading = false;
+		}
+	}
+
+	onMount(() => {
+		void loadStatement();
+	});
 </script>
 
 <svelte:head>
@@ -29,7 +79,7 @@
 </svelte:head>
 
 <div class="page-wrap">
-	<MemberNav active="dashboard" /> <!-- Nav uses exact id from links array, keeping highlight clear -> could add 'statement' to it, but for now we follow schema -->
+	<MemberNav active="statement" />
 
 	<div class="main-content">
 		<div class="dashboard-body">
@@ -54,6 +104,9 @@
 					<button class="filter-chip {filterType === 'debit' ? 'active' : ''}" onclick={() => filterType = 'debit'}>Debits Out</button>
 					<button class="filter-chip {filterType === 'transfer' ? 'active' : ''}" onclick={() => filterType = 'transfer'}>Transfers</button>
 				</div>
+				{#if loadError}
+					<p class="text-error" style="margin: 0 0 16px;">{loadError}</p>
+				{/if}
 
 				<div class="statement-table-wrapper">
 					<table class="data-table">
@@ -90,7 +143,7 @@
 							{#if filteredTransactions.length === 0}
 								<tr>
 									<td colspan="4" style="text-align: center; padding: 48px; color: var(--color-on-surface-variant);">
-										No transactions found for this filter.
+										{isLoading ? 'Loading statement transactions...' : 'No transactions found for this filter.'}
 									</td>
 								</tr>
 							{/if}
@@ -102,7 +155,7 @@
 
 		<!-- Footer -->
 		<footer class="footer">
-			<p class="font-label" style="margin: 0;">© 2024 G VAULT</p>
+			<p class="font-label" style="margin: 0;">© 2026 G VAULT</p>
 			<div class="footer-links">
 				<a href="/legal/privacy" class="footer-link">Privacy</a>
 				<a href="/legal/terms" class="footer-link">Terms</a>

@@ -61,7 +61,7 @@
 		</div>
 
 		<footer class="footer">
-			<p class="font-label" style="margin: 0;">© 2024 G VAULT</p>
+			<p class="font-label" style="margin: 0;">© 2026 G VAULT</p>
 			<div class="footer-links">
 				<a href="/legal/privacy" class="footer-link">Privacy</a>
 				<a href="/legal/terms" class="footer-link">Terms</a>

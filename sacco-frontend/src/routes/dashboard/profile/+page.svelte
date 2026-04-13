@@ -1,22 +1,82 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
+	import { me, updateProfile } from '$lib/api/client';
+	import { getStoredToken, getStoredUser, persistSession } from '$lib/auth/session';
 	import MemberNav from '$lib/components/MemberNav.svelte';
 
 	let activeSection = $state('personal'); // 'personal', 'kyc', 'security'
 
-	let firstName = $state('Julian');
-	let lastName = $state('Thorne');
-	let email = $state('julian.thorne@email.com');
-	let phone = $state('+256 701 234 567');
-	let address = $state('Plot 12 Nakasero Road, Kampala, Uganda');
+	let fullName = $state('');
+	let email = $state('');
+	let phone = $state('');
+	let nationalId = $state('');
 
+	let isLoading = $state(true);
 	let isSaving = $state(false);
+	let saveSuccess = $state(false);
+	let saveError = $state('');
+
+	async function loadProfile() {
+		const token = getStoredToken();
+		if (!token) {
+			goto('/');
+			return;
+		}
+
+		isLoading = true;
+		try {
+			const user = await me(token);
+			fullName = user.full_name;
+			email = user.email;
+			phone = user.phone_number;
+			nationalId = user.national_id ?? '';
+		} catch {
+			// Fall back to stored session data
+			const stored = getStoredUser();
+			if (stored) {
+				fullName = stored.full_name;
+				email = stored.email;
+				phone = stored.phone_number;
+				nationalId = stored.national_id ?? '';
+			}
+		} finally {
+			isLoading = false;
+		}
+	}
 
 	async function saveProfile(e: SubmitEvent) {
 		e.preventDefault();
+		const token = getStoredToken();
+		if (!token) {
+			goto('/');
+			return;
+		}
+
+		saveError = '';
+		saveSuccess = false;
 		isSaving = true;
-		await new Promise(r => setTimeout(r, 800));
-		isSaving = false;
+		try {
+			const updated = await updateProfile(token, {
+				full_name: fullName.trim(),
+				email: email.trim(),
+				phone_number: phone.trim(),
+				national_id: nationalId.trim() || undefined
+			});
+			// Update the local session so the sidebar and other pages reflect the change
+			persistSession(token, updated);
+			saveSuccess = true;
+			setTimeout(() => (saveSuccess = false), 3000);
+		} catch (error) {
+			saveError = error instanceof Error ? error.message : 'Unable to save profile changes.';
+		} finally {
+			isSaving = false;
+		}
 	}
+
+	onMount(() => {
+		void loadProfile();
+	});
 </script>
 
 <svelte:head>
@@ -24,7 +84,7 @@
 </svelte:head>
 
 <div class="page-wrap">
-	<MemberNav active="" /> <!-- Deliberately no active highlight -->
+	<MemberNav active="profile" />
 
 	<div class="main-content">
 		<div class="dashboard-body">
@@ -50,42 +110,53 @@
 				<div class="profile-content">
 					{#if activeSection === 'personal'}
 						<p class="font-label" style="margin: 0 0 24px;">Personal Information</p>
-						<form onsubmit={saveProfile} class="form-grid">
-							<div class="input-group">
-								<label for="fname" class="input-label">First Name</label>
-								<input id="fname" type="text" class="input-field" bind:value={firstName} required />
-							</div>
-							<div class="input-group">
-								<label for="lname" class="input-label">Last Name</label>
-								<input id="lname" type="text" class="input-field" bind:value={lastName} required />
-							</div>
-							<div class="input-group">
-								<label for="email" class="input-label">Email Address</label>
-								<input id="email" type="email" class="input-field" bind:value={email} required />
-							</div>
-							<div class="input-group">
-								<label for="phone" class="input-label">Phone Number</label>
-								<input id="phone" type="tel" class="input-field" bind:value={phone} required />
-							</div>
-							<div class="input-group" style="grid-column: 1 / -1;">
-								<label for="address" class="input-label">Residential Address</label>
-								<input id="address" type="text" class="input-field" bind:value={address} required />
-							</div>
-							
-							<div style="grid-column: 1 / -1; margin-top: 16px;">
-								<button type="submit" class="btn-primary" disabled={isSaving}>
-									{#if isSaving}
-										<span class="material-icons spin" style="font-size: 16px;">autorenew</span> Saving...
-									{:else}
-										Save Changes
-									{/if}
-								</button>
-							</div>
-						</form>
+
+						{#if isLoading}
+							<p style="color: var(--color-on-surface-variant);">Loading profile...</p>
+						{:else}
+							<form onsubmit={saveProfile} class="form-grid">
+								<div class="input-group" style="grid-column: 1 / -1;">
+									<label for="fname" class="input-label">Full Name</label>
+									<input id="fname" type="text" class="input-field" bind:value={fullName} required />
+								</div>
+								<div class="input-group">
+									<label for="email" class="input-label">Email Address</label>
+									<input id="email" type="email" class="input-field" bind:value={email} required />
+								</div>
+								<div class="input-group">
+									<label for="phone" class="input-label">Phone Number</label>
+									<input id="phone" type="tel" class="input-field" bind:value={phone} required />
+								</div>
+								<div class="input-group" style="grid-column: 1 / -1;">
+									<label for="nid" class="input-label">National ID</label>
+									<input id="nid" type="text" class="input-field" bind:value={nationalId} placeholder="Optional" />
+								</div>
+
+								{#if saveError}
+									<p class="text-error" style="grid-column: 1 / -1; margin: 0;">{saveError}</p>
+								{/if}
+								{#if saveSuccess}
+									<p style="grid-column: 1 / -1; margin: 0; color: #1a7f37; font-size: 0.8125rem; font-weight: 600;">
+										<span class="material-icons" style="font-size: 14px; vertical-align: middle;">check_circle</span>
+										Profile updated successfully.
+									</p>
+								{/if}
+
+								<div style="grid-column: 1 / -1; margin-top: 16px;">
+									<button type="submit" class="btn-primary" disabled={isSaving}>
+										{#if isSaving}
+											<span class="material-icons spin" style="font-size: 16px;">autorenew</span> Saving...
+										{:else}
+											Save Changes
+										{/if}
+									</button>
+								</div>
+							</form>
+						{/if}
 
 					{:else if activeSection === 'kyc'}
 						<p class="font-label" style="margin: 0 0 24px;">KYC Status</p>
-						
+
 						<div style="background: var(--color-surface-container-low); padding: 24px; margin-bottom: 32px; display: flex; justify-content: space-between; align-items: center;">
 							<div>
 								<p style="margin: 0 0 8px; font-weight: 600;">Verification Level 3 (Maximum)</p>
@@ -135,7 +206,7 @@
 
 		<!-- Footer -->
 		<footer class="footer">
-			<p class="font-label" style="margin: 0;">© 2024 G VAULT</p>
+			<p class="font-label" style="margin: 0;">© 2026 G VAULT</p>
 			<div class="footer-links">
 				<a href="/legal/privacy" class="footer-link">Privacy</a>
 				<a href="/legal/terms" class="footer-link">Terms</a>

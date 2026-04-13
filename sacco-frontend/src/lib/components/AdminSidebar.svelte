@@ -1,4 +1,8 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { logout } from '$lib/api/client';
+	import { clearSession, getStoredToken } from '$lib/auth/session';
+
 	let { active = 'overview', onchange } = $props<{
 		active?: string;
 		onchange?: (section: string) => void;
@@ -12,6 +16,20 @@
 		{ id: 'audit', label: 'Audit', icon: 'receipt_long' },
 		{ id: 'settings', label: 'Settings', icon: 'tune' },
 	];
+
+	async function handleSignOut() {
+		const token = getStoredToken();
+		try {
+			if (token) {
+				await logout(token);
+			}
+		} catch {
+			// Best-effort logout: clear local session regardless of API response.
+		} finally {
+			clearSession();
+			goto('/');
+		}
+	}
 </script>
 
 <aside class="sidebar">
@@ -35,27 +53,10 @@
 		{/each}
 	</nav>
 
-	<!-- Bottom nav items for member portal -->
-	<div style="padding: 16px 0; border-top: none;">
-		<p class="font-label" style="padding: 0 24px; margin: 0 0 8px; color: var(--color-on-surface-variant); opacity: 0.6;">Portal Links</p>
-		<a href="/dashboard" class="sidebar-link" style="font-size: 0.6875rem;">
-			<span class="material-icons">person</span>
-			Dashboard
-		</a>
-		<a href="/dashboard/accounts" class="sidebar-link" style="font-size: 0.6875rem;">
-			<span class="material-icons">account_balance</span>
-			Accounts
-		</a>
-		<a href="/dashboard/loans" class="sidebar-link" style="font-size: 0.6875rem;">
-			<span class="material-icons">receipt_long</span>
-			Loans
-		</a>
-	</div>
-
 	<div style="padding: 24px; margin-top: auto;">
-		<a href="/" class="btn-ghost" style="font-size: 0.625rem; width: 100%;">
+		<button type="button" onclick={handleSignOut} class="btn-ghost" style="font-size: 0.625rem; width: 100%;">
 			<span class="material-icons" style="font-size: 15px;">logout</span>
 			Sign Out
-		</a>
+		</button>
 	</div>
 </aside>

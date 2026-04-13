@@ -1,4 +1,8 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
+	import { createTransfer, fetchDashboardSummary } from '$lib/api/client';
+	import { getStoredToken } from '$lib/auth/session';
 	import MemberNav from '$lib/components/MemberNav.svelte';
 
 	let transferType = $state('internal'); // 'internal' or 'external'
@@ -8,15 +12,83 @@
 	let note = $state('');
 
 	let isSubmitting = $state(false);
+	let isLoadingBalance = $state(true);
 	let submitted = $state(false);
+	let errorMsg = $state('');
+	let referenceId = $state('');
+	let availableBalance = $state(0);
+
+	function formatMoney(n: number) {
+		return `UGX ${Math.round(n).toLocaleString('en-UG')}`;
+	}
+
+	async function loadBalance() {
+		const token = getStoredToken();
+		if (!token) {
+			goto('/');
+			return;
+		}
+
+		isLoadingBalance = true;
+		try {
+			const summary = await fetchDashboardSummary(token);
+			availableBalance = Number(summary.savings_balance);
+			if (!fromAccount) {
+				fromAccount = 'ACC-001';
+			}
+		} catch (error) {
+			errorMsg = error instanceof Error ? error.message : 'Unable to load account balance.';
+		} finally {
+			isLoadingBalance = false;
+		}
+	}
 
 	async function handleTransfer(e: SubmitEvent) {
 		e.preventDefault();
+		const token = getStoredToken();
+		if (!token) {
+			goto('/');
+			return;
+		}
+		const transferAmount = Number(amount);
+		const destination = toAccount.trim();
+
+		if (!transferAmount || transferAmount <= 0) {
+			errorMsg = 'Enter a valid transfer amount.';
+			return;
+		}
+		if (transferAmount > availableBalance) {
+			errorMsg = 'Insufficient balance for transfer.';
+			return;
+		}
+		if (!destination) {
+			errorMsg = 'Destination account is required.';
+			return;
+		}
+
+		errorMsg = '';
 		isSubmitting = true;
-		await new Promise((r) => setTimeout(r, 1500));
-		isSubmitting = false;
-		submitted = true;
+		try {
+			const response = await createTransfer(token, {
+				transfer_type: transferType as 'internal' | 'external',
+				destination,
+				amount: transferAmount,
+				note: note.trim() || undefined
+			});
+			referenceId = response.transaction.reference;
+			availableBalance = Number(response.new_balance);
+
+			submitted = true;
+		} catch (error) {
+			errorMsg = error instanceof Error ? error.message : 'Transfer failed.';
+		} finally {
+			isSubmitting = false;
+		}
 	}
+
+	onMount(() => {
+		void loadBalance();
+	});
 </script>
 
 <svelte:head>
@@ -37,7 +109,7 @@
 						Your transfer of <strong>UGX {Number(amount).toLocaleString('en-UG')}</strong> has been successfully scheduled.
 					</p>
 					<p class="font-label" style="margin: 0 0 8px;">Reference ID</p>
-					<p style="font-size: 1.5rem; font-weight: 800; letter-spacing: 0.08em; margin: 0 0 40px; font-family: monospace;">TRX-{Math.floor(Math.random() * 900000) + 100000}</p>
+					<p style="font-size: 1.5rem; font-weight: 800; letter-spacing: 0.08em; margin: 0 0 40px; font-family: monospace;">{referenceId}</p>
 					
 					<div style="display: flex; gap: 16px; justify-content: center;">
 						<button class="btn-secondary" onclick={() => { submitted = false; amount = ''; note = ''; }}>New Transfer</button>
@@ -74,10 +146,9 @@
 					<div class="form-grid">
 						<div class="input-group" style="grid-column: 1 / -1;">
 							<label for="from-acc" class="input-label">From Account</label>
-							<select id="from-acc" class="select-field" bind:value={fromAccount} required>
+							<select id="from-acc" class="select-field" bind:value={fromAccount} required disabled={isLoadingBalance}>
 								<option value="">Select source account...</option>
-								<option value="ACC-001">Main Savings (UGX 142,850)</option>
-								<option value="ACC-002">Emergency Fund (UGX 17,850)</option>
+								<option value="ACC-001">Main Savings ({formatMoney(availableBalance)})</option>
 							</select>
 						</div>
 
@@ -88,7 +159,7 @@
 									<option value="">Select destination account...</option>
 									<option value="ACC-002">Emergency Fund</option>
 									<option value="ACC-001">Main Savings</option>
-									<option value="LN-001">Loan Repayment (LN-2024)</option>
+									<option value="LN-001">Loan Repayment (LN-2026)</option>
 								</select>
 							</div>
 						{:else}
@@ -100,7 +171,21 @@
 
 						<div class="input-group" style="grid-column: 1 / -1;">
 							<label for="amount" class="input-label">Amount (UGX)</label>
-							<input id="amount" type="number" class="input-field" placeholder="0" bind:value={amount} min="1" step="1" required style="font-size: 1.5rem; padding: 16px;" />
+							<input
+								id="amount"
+								type="number"
+								class="input-field"
+								placeholder="0"
+								bind:value={amount}
+								min="1"
+								step="1"
+								max={availableBalance > 0 ? String(Math.floor(availableBalance)) : undefined}
+								required
+								style="font-size: 1.5rem; padding: 16px;"
+							/>
+							<p style="font-size: 0.75rem; color: var(--color-on-surface-variant); margin: 8px 0 0;">
+								{isLoadingBalance ? 'Loading available balance...' : `Available Balance: ${formatMoney(availableBalance)}`}
+							</p>
 						</div>
 
 						<div class="input-group" style="grid-column: 1 / -1;">
@@ -110,7 +195,12 @@
 					</div>
 
 					<div style="margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--color-surface-container-high);">
-						<button type="submit" class="btn-primary" style="width: 100%; justify-content: center;" disabled={isSubmitting}>
+						<button
+							type="submit"
+							class="btn-primary"
+							style="width: 100%; justify-content: center;"
+							disabled={isSubmitting || isLoadingBalance || !amount}
+						>
 							{#if isSubmitting}
 								<span class="material-icons spin" style="font-size: 16px;">autorenew</span>
 								Processing...
@@ -120,13 +210,16 @@
 							{/if}
 						</button>
 					</div>
+					{#if errorMsg}
+						<p class="text-error" style="margin: 16px 0 0;">{errorMsg}</p>
+					{/if}
 				</form>
 			{/if}
 		</div>
 
 		<!-- Footer -->
 		<footer class="footer">
-			<p class="font-label" style="margin: 0;">© 2024 G VAULT</p>
+			<p class="font-label" style="margin: 0;">© 2026 G VAULT</p>
 			<div class="footer-links">
 				<a href="/legal/privacy" class="footer-link">Privacy</a>
 				<a href="/legal/terms" class="footer-link">Terms</a>

@@ -1,4 +1,8 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
+	import { createLoanApplication } from '$lib/api/client';
+	import { getStoredToken, getStoredUser } from '$lib/auth/session';
 	import MemberNav from '$lib/components/MemberNav.svelte';
 
 	let currentStep = $state(1);
@@ -27,6 +31,17 @@
 	let isSubmitting = $state(false);
 	let submitted = $state(false);
 	let filesUploaded = $state(false);
+	let submitError = $state('');
+	let referenceNumber = $state('');
+
+	onMount(() => {
+		const user = getStoredUser();
+		if (user?.full_name) {
+			const parts = user.full_name.trim().split(/\s+/);
+			firstName = parts[0] || '';
+			lastName = parts.slice(1).join(' ') || '';
+		}
+	});
 
 	function validateStep() {
 		if (currentStep === 1) return firstName.trim() !== '' && lastName.trim() !== '' && idNumber.trim() !== '';
@@ -50,10 +65,35 @@
 
 	async function handleSubmit(e: SubmitEvent) {
 		e.preventDefault();
+		const token = getStoredToken();
+		if (!token) {
+			goto('/');
+			return;
+		}
+
+		submitError = '';
 		isSubmitting = true;
-		await new Promise((r) => setTimeout(r, 1500));
-		isSubmitting = false;
-		submitted = true;
+		try {
+			const response = await createLoanApplication(token, {
+				amount: Number(loanAmount),
+				purpose: loanPurpose,
+				term_months: Number(loanTerm),
+				collateral_type: collateralType,
+				collateral_value: collateralValue ? Number(collateralValue) : undefined,
+				applicant_first_name: firstName.trim(),
+				applicant_last_name: lastName.trim(),
+				applicant_id_number: idNumber.trim(),
+				employer: employer.trim() || undefined,
+				monthly_salary: salary ? Number(salary) : undefined
+			});
+
+			referenceNumber = `LN-${new Date().getFullYear()}-${String(response.id).padStart(5, '0')}`;
+			submitted = true;
+		} catch (error) {
+			submitError = error instanceof Error ? error.message : 'Unable to submit loan application.';
+		} finally {
+			isSubmitting = false;
+		}
 	}
 
 	const presetAmounts = [500000, 1000000, 2500000, 5000000, 10000000];
@@ -78,7 +118,7 @@
 						Your loan application has been received and is under automated review. You will be contacted within 1–3 business days.
 					</p>
 					<p class="font-label" style="margin: 0 0 8px;">Reference Number</p>
-					<p style="font-size: 1.5rem; font-weight: 800; letter-spacing: 0.08em; margin: 0 0 40px;">LN-2024-{Math.floor(Math.random() * 90000) + 10000}</p>
+					<p style="font-size: 1.5rem; font-weight: 800; letter-spacing: 0.08em; margin: 0 0 40px;">{referenceNumber}</p>
 					<a href="/dashboard" class="btn-primary">
 						<span class="material-icons" style="font-size: 16px;">arrow_back</span>
 						Return to Dashboard
@@ -360,12 +400,15 @@
 							</button>
 						{/if}
 					</div>
+					{#if submitError}
+						<p class="text-error" style="margin: 16px 0 0;">{submitError}</p>
+					{/if}
 				</form>
 			{/if}
 		</div>
 
 		<footer class="footer">
-			<p class="font-label" style="margin: 0;">© 2024 G VAULT</p>
+			<p class="font-label" style="margin: 0;">© 2026 G VAULT</p>
 			<div class="footer-links">
 				<a href="/legal/privacy" class="footer-link">Privacy</a>
 				<a href="/legal/terms" class="footer-link">Terms</a>
